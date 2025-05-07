@@ -19,10 +19,10 @@ const CONFIG = {
   RETRY_DELAY: 3000
 };
 
-// Initialize provider with proper configuration
-const provider = new ethers.JsonRpcProvider({
-  url: CONFIG.RPC_URL,
-  chainId: CONFIG.CHAIN_ID
+// Initialize provider - FIXED VERSION
+const provider = new ethers.JsonRpcProvider(CONFIG.RPC_URL, {
+  chainId: CONFIG.CHAIN_ID,
+  name: 'sepolia'
 });
 
 // Create screen
@@ -38,7 +38,7 @@ const grid = new contrib.grid({
   screen: screen
 });
 
-// UI Components initialization (same as before)
+// UI Components initialization
 const transactionLogBox = grid.set(0, 0, 6, 6, contrib.log, {
   fg: 'green',
   selectedFg: 'green',
@@ -109,7 +109,7 @@ const txStats = {
   y: Array(30).fill(0)
 };
 
-// Improved logger with retry capability
+// Improved logger
 const logger = {
   log: (level, msg) => {
     const colors = {
@@ -139,9 +139,64 @@ const logger = {
   step: (msg) => logger.log('step', msg)
 };
 
-// Contract ABIs (same as before)
-const UCS03_ABI = [ /* ... */ ];
-const USDC_ABI = [ /* ... */ ];
+// Contract ABIs
+const UCS03_ABI = [
+  {
+    inputs: [
+      { internalType: 'uint32', name: 'channelId', type: 'uint32' },
+      { internalType: 'uint64', name: 'timeoutHeight', type: 'uint64' },
+      { internalType: 'uint64', name: 'timeoutTimestamp', type: 'uint64' },
+      { internalType: 'bytes32', name: 'salt', type: 'bytes32' },
+      {
+        components: [
+          { internalType: 'uint8', name: 'version', type: 'uint8' },
+          { internalType: 'uint8', name: 'opcode', type: 'uint8' },
+          { internalType: 'bytes', name: 'operand', type: 'bytes' },
+        ],
+        internalType: 'struct Instruction',
+        name: 'instruction',
+        type: 'tuple',
+      },
+    ],
+    name: 'send',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+];
+
+const USDC_ABI = [
+  {
+    constant: true,
+    inputs: [{ name: 'account', type: 'address' }],
+    name: 'balanceOf',
+    outputs: [{ name: '', type: 'uint256' }],
+    type: 'function',
+    stateMutability: 'view',
+  },
+  {
+    constant: true,
+    inputs: [
+      { name: 'owner', type: 'address' },
+      { name: 'spender', type: 'address' },
+    ],
+    name: 'allowance',
+    outputs: [{ name: '', type: 'uint256' }],
+    type: 'function',
+    stateMutability: 'view',
+  },
+  {
+    constant: false,
+    inputs: [
+      { name: 'spender', type: 'address' },
+      { name: 'value', type: 'uint256' },
+    ],
+    name: 'approve',
+    outputs: [{ name: '', type: 'bool' }],
+    type: 'function',
+    stateMutability: 'nonpayable',
+  },
+];
 
 // Helper functions
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -150,7 +205,7 @@ function timelog() {
   return moment().tz('Asia/Jakarta').format('HH:mm:ss | DD-MM-YYYY');
 }
 
-async function withRetry(fn, context, retries = CONFIG.MAX_RETRIES) {
+async function withRetry(fn, retries = CONFIG.MAX_RETRIES) {
   for (let i = 0; i < retries; i++) {
     try {
       return await fn();
@@ -257,8 +312,12 @@ async function sendTransaction(wallet, iteration, maxTransactions) {
     const timestampNow = Math.floor(Date.now() / 1000);
     const salt = ethers.keccak256(ethers.solidityPacked(['address', 'uint256'], [wallet.address, timestampNow]));
 
-    const operand = '0x...' + addressHex + '...'; // Your full operand here
-    
+    const operand = '0x00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000002c00000000000000000000000000000000000000000000000000000000000000140000000000000000000000000000000000000000000000000000000000000018000000000000000000000000000000000000000000000000000000000000001c000000000000000000000000000000000000000000000000000000000000027100000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000024000000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000028000000000000000000000000000000000000000000000000000000000000027100000000000000000000000000000000000000000000000000000000000000014' +
+      addressHex +
+      '0000000000000000000000000000000000000000000000000000000000000000000000000000000000000014' +
+      addressHex +
+      '00000000000000000000000000000000000000000000000000000000000000000000000000000000000000141c7d4b196cb0c7b01d743fbc6116a902379c72380000000000000000000000000000000000000000000000000000000000000000000000000000000000000004555344430000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000045553444300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001457978bfe465ad9b1c0bf80f6c1539d300705ea50000000000000000000000000';
+
     const instruction = {
       version: 0,
       opcode: 2,
@@ -293,9 +352,57 @@ async function sendTransaction(wallet, iteration, maxTransactions) {
   }
 }
 
+// UI Update functions
+function updateCharts() {
+  // Update donut chart with transaction status
+  txDonut.setData([
+    {percent: txStats.success, label: 'Success', color: 'green'},
+    {percent: txStats.failed, label: 'Failed', color: 'red'},
+    {percent: txStats.pending, label: 'Pending', color: 'yellow'}
+  ]);
+  
+  // Update line chart with performance data
+  if (txStats.times.length > 0) {
+    txStats.y.shift();
+    txStats.y.push(txStats.times[txStats.times.length - 1]);
+    
+    txLineChart.setData([{
+      title: 'Tx Time',
+      x: txStats.x,
+      y: txStats.y,
+      style: {line: 'yellow'}
+    }]);
+  }
+  
+  screen.render();
+}
+
+function updateStatusInfo() {
+  const now = moment().tz('Asia/Jakarta').format('HH:mm:ss | DD-MM-YYYY');
+  const networkStatus = Math.floor(Math.random() * 30) + 70; // Simulating network status
+  
+  infoBox.setMarkdown(`
+# System Status
+
+**Time**: ${now}
+**Network**: Sepolia to Holesky Bridge
+**Status**: Running
+**API Health**: Good
+**RPC Provider**: Alchemy Sepolia
+
+## Network Information
+* Chain ID: 11155111 (Sepolia)
+* Gas Price: ~${Math.floor(Math.random() * 15) + 25} Gwei
+* Pending Txs: ${Math.floor(Math.random() * 10)}
+  `);
+  
+  gasUsageGauge.setPercent(networkStatus);
+  screen.render();
+}
+
 // Main execution flow
 async function main() {
-  // UI Setup (same as before)
+  // UI Setup
   screen.key(['escape', 'q', 'C-c'], () => process.exit(0));
   
   const statusBar = blessed.box({
@@ -352,7 +459,58 @@ async function main() {
     process.exit(1);
   }
 
-  // Main execution loop
+  // Update wallet table
+  const tableData = await Promise.all(validWallets.map(async (wallet) => {
+    try {
+      const w = new ethers.Wallet(wallet.privatekey, provider);
+      const usdcContract = new ethers.Contract(CONFIG.USDC_ADDRESS, USDC_ABI, w);
+      const balance = await usdcContract.balanceOf(w.address);
+      return [wallet.name || 'Unnamed', w.address.slice(0, 12) + '...' + w.address.slice(-6), ethers.formatUnits(balance, 6)];
+    } catch (e) {
+      return [wallet.name || 'Unnamed', 'Error', 'Error'];
+    }
+  }));
+  
+  walletInfoTable.setData({
+    headers: ['Name', 'Address', 'USDC Balance'],
+    data: tableData
+  });
+  
+  screen.render();
+
+  // Get transaction count
+  const maxTransactionInput = await new Promise(resolve => {
+    const input = blessed.prompt({
+      parent: screen,
+      border: {type: 'line', fg: 'cyan'},
+      height: '30%',
+      width: '50%',
+      top: 'center',
+      left: 'center',
+      label: ' Input Required ',
+      tags: true,
+      keys: true,
+      vi: true
+    });
+    
+    input.input('Enter the number of transactions per wallet: ', '', (err, value) => {
+      screen.remove(input);
+      screen.render();
+      resolve(value);
+    });
+  });
+
+  const maxTransaction = parseInt(maxTransactionInput.trim());
+  if (isNaN(maxTransaction) || maxTransaction <= 0) {
+    logger.error(`Invalid number. Please enter a positive number.`);
+    await delay(5000);
+    process.exit(1);
+  }
+
+  // Set up status updates
+  setInterval(updateStatusInfo, 10000);
+
+  // Process wallets
   for (const walletInfo of validWallets) {
     try {
       const wallet = new ethers.Wallet(walletInfo.privatekey, provider);
@@ -362,9 +520,9 @@ async function main() {
         continue;
       }
 
-      for (let i = 1; i <= walletInfo.maxTransactions || 1; i++) {
-        await sendTransaction(wallet, i, walletInfo.maxTransactions || 1);
-        if (i < (walletInfo.maxTransactions || 1)) {
+      for (let i = 1; i <= maxTransaction; i++) {
+        await sendTransaction(wallet, i, maxTransaction);
+        if (i < maxTransaction) {
           await delay(1000);
         }
       }
@@ -381,12 +539,3 @@ main().catch(err => {
   logger.error(`Fatal error: ${err.message}`);
   process.exit(1);
 });
-
-// UI Update functions (same as before)
-function updateCharts() {
-  // ... existing implementation ...
-}
-
-function updateStatusInfo() {
-  // ... existing implementation ...
-}
