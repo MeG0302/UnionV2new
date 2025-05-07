@@ -224,8 +224,63 @@ const USDC_ABI = [
   },
 ];
 
+const WETH_ABI = [
+  {
+    constant: false,
+    inputs: [
+      { name: 'wad', type: 'uint256' }
+    ],
+    name: 'withdraw',
+    outputs: [],
+    payable: false,
+    stateMutability: 'nonpayable',
+    type: 'function'
+  },
+  {
+    constant: false,
+    inputs: [],
+    name: 'deposit',
+    outputs: [],
+    payable: true,
+    stateMutability: 'payable',
+    type: 'function'
+  },
+  {
+    constant: true,
+    inputs: [{ name: 'account', type: 'address' }],
+    name: 'balanceOf',
+    outputs: [{ name: '', type: 'uint256' }],
+    type: 'function',
+    stateMutability: 'view',
+  },
+  {
+    constant: false,
+    inputs: [
+      { name: 'guy', type: 'address' },
+      { name: 'wad', type: 'uint256' }
+    ],
+    name: 'approve',
+    outputs: [{ name: '', type: 'bool' }],
+    payable: false,
+    stateMutability: 'nonpayable',
+    type: 'function'
+  },
+  {
+    constant: true,
+    inputs: [
+      { name: 'owner', type: 'address' },
+      { name: 'spender', type: 'address' }
+    ],
+    name: 'allowance',
+    outputs: [{ name: '', type: 'uint256' }],
+    type: 'function',
+    stateMutability: 'view',
+  }
+];
+
 const contractAddress = '0x5FbE74A283f7954f10AA04C2eDf55578811aeb03';
 const USDC_ADDRESS = '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238';
+const WETH_ADDRESS = '0x7b79995e5f793A07Bc00c21412e50Ecae098E7f9';
 const graphqlEndpoint = 'https://graphql.union.build/v1/graphql';
 const baseExplorerUrl = 'https://sepolia.etherscan.io';
 const unionUrl = 'https://app.union.build/explorer';
@@ -362,7 +417,7 @@ async function sendFromWallet(walletInfo, maxTransaction, transferType) {
   let tokenAddress = '';
   let tokenAbi = [];
   let channelId = 0;
-  const transferAmount = ethers.parseEther('0.0001'); // 0.0001 ETH
+  const transferAmount = ethers.parseEther('0.0001'); // 0.0001 WETH
   
   if (transferType === 'usdc') {
     tokenName = 'USDC';
@@ -370,19 +425,47 @@ async function sendFromWallet(walletInfo, maxTransaction, transferType) {
     tokenAbi = USDC_ABI;
     channelId = 8;
     shouldProceed = await checkBalanceAndApprove(wallet, tokenAddress, tokenAbi, contractAddress, tokenName);
-  } else if (transferType === 'eth') {
-    tokenName = 'ETH';
-    channelId = 9; // Channel ID for ETH transfers
+  } else if (transferType === 'weth') {
+    tokenName = 'WETH';
+    tokenAddress = WETH_ADDRESS;
+    tokenAbi = WETH_ABI;
+    channelId = 9; // Channel ID for WETH transfers
     
-    // Check ETH balance (including gas costs)
+    // Check ETH balance first (needed for gas and potential WETH wrapping)
     const ethBalance = await provider().getBalance(wallet.address);
-    const requiredBalance = transferAmount + ethers.parseEther('0.001'); // Adding buffer for gas
-    if (ethBalance < requiredBalance) {
-      logger.error(`Insufficient ETH balance. Need at least ${ethers.formatEther(requiredBalance)} ETH (including gas)`);
+    const requiredEthForGas = ethers.parseEther('0.001');
+    if (ethBalance < requiredEthForGas) {
+      logger.error(`Insufficient ETH for gas. Need at least ${ethers.formatEther(requiredEthForGas)} ETH`);
       return;
     }
     
-    shouldProceed = true;
+    // Check WETH balance
+    const wethContract = new ethers.Contract(WETH_ADDRESS, WETH_ABI, wallet);
+    const wethBalance = await wethContract.balanceOf(wallet.address);
+    
+    if (wethBalance < transferAmount) {
+      // If not enough WETH, try to wrap ETH
+      const ethToWrap = transferAmount - wethBalance;
+      const totalEthNeeded = ethToWrap + requiredEthForGas;
+      
+      if (ethBalance < totalEthNeeded) {
+        logger.error(`Insufficient ETH to wrap. Need ${ethers.formatEther(totalEthNeeded)} ETH total (for wrapping and gas)`);
+        return;
+      }
+      
+      logger.loading(`Wrapping ${ethers.formatEther(ethToWrap)} ETH to WETH...`);
+      try {
+        const wrapTx = await wethContract.deposit({ value: ethToWrap });
+        await wrapTx.wait();
+        logger.success(`Successfully wrapped ${ethers.formatEther(ethToWrap)} ETH to WETH`);
+      } catch (err) {
+        logger.error(`Failed to wrap ETH: ${err.message}`);
+        return;
+      }
+    }
+    
+    // Approve WETH spending
+    shouldProceed = await checkBalanceAndApprove(wallet, tokenAddress, tokenAbi, contractAddress, tokenName);
   }
   
   if (!shouldProceed) return;
@@ -408,8 +491,8 @@ async function sendFromWallet(walletInfo, maxTransaction, transferType) {
       '0000000000000000000000000000000000000000000000000000000000000000000000000000000000000014' +
       addressHex +
       '00000000000000000000000000000000000000000000000000000000000000000000000000000000000000141c7d4b196cb0c7b01d743fbc6116a902379c72380000000000000000000000000000000000000000000000000000000000000000000000000000000000000004555344430000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000045553444300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001457978bfe465ad9b1c0bf80f6c1539d300705ea50000000000000000000000000';
-    } else if (transferType === 'eth') {
-      // ETH transfer operand with 0.0001 ETH amount
+    } else if (transferType === 'weth') {
+      // WETH transfer operand with 0.0001 WETH amount
       operand = '0xff0d7c2f00000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000183e3bcd270059c058ce191dc34ac59ab0ccef2037033d3b50e15022d39fd5fd451083f938fa829800000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000003a000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000002c00000000000000000000000000000000000000000000000000000000000000140000000000000000000000000000000000000000000000000000000000000018000000000000000000000000000000000000000000000000000000000000001c0000000000000000000000000000000000000000000000000000000e8d4a5100000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000240000000000000000000000000000000000000000000000000000000000000001200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000280000000000000000000000000000000000000000000000000000000e8d4a510000000000000000000000000000000000000000000000000000000000000000014' +
       addressHex +
       '0000000000000000000000000000000000000000000000000000000000000000000000000000000000000014' +
@@ -430,7 +513,7 @@ async function sendFromWallet(walletInfo, maxTransaction, transferType) {
       
       // Add gas limit to prevent out of gas errors
       const tx = await contract.send(channelId, timeoutHeight, timeoutTimestamp, salt, instruction, {
-        gasLimit: 500000 // Increased gas limit for ETH transfers
+        gasLimit: 500000 // Increased gas limit for WETH transfers
       });
       
       const receipt = await tx.wait(1);
@@ -546,13 +629,15 @@ async function main() {
     try {
       const w = new ethers.Wallet(wallet.privatekey, provider());
       const usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, w);
+      const wethContract = new ethers.Contract(WETH_ADDRESS, WETH_ABI, w);
       const ethBalance = await provider().getBalance(w.address);
       const usdcBalance = await usdcContract.balanceOf(w.address);
+      const wethBalance = await wethContract.balanceOf(w.address);
       
       return [
         wallet.name || 'Unnamed', 
         w.address.slice(0, 12) + '...' + w.address.slice(-6), 
-        `USDC: ${ethers.formatUnits(usdcBalance, 6)}\nETH: ${ethers.formatEther(ethBalance)}`
+        `USDC: ${ethers.formatUnits(usdcBalance, 6)}\nETH: ${ethers.formatEther(ethBalance)}\nWETH: ${ethers.formatEther(wethBalance)}`
       ];
     } catch (e) {
       return [wallet.name || 'Unnamed', 'Error', 'Error'];
@@ -567,9 +652,9 @@ async function main() {
   screen.render();
 
   // Ask for transfer type
-  const transferType = await askQuestion("Choose transfer type (usdc/eth): ");
-  if (!['usdc', 'eth'].includes(transferType.toLowerCase())) {
-    logger.error("Invalid transfer type. Please choose either 'usdc' or 'eth'.");
+  const transferType = await askQuestion("Choose transfer type (usdc/weth): ");
+  if (!['usdc', 'weth'].includes(transferType.toLowerCase())) {
+    logger.error("Invalid transfer type. Please choose either 'usdc' or 'weth'.");
     await delay(5000);
     process.exit(1);
   }
