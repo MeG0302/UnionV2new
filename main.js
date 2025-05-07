@@ -138,17 +138,6 @@ function updateCharts() {
   screen.render();
 }
 
-// Original code with modifications to update UI
-const colors = {
-  reset: "\x1b[0m",
-  cyan: "\x1b[36m",
-  green: "\x1b[32m",
-  yellow: "\x1b[33m",
-  red: "\x1b[31m",
-  white: "\x1b[37m",
-  bold: "\x1b[1m"
-};
-
 // Modified logger to use the dashboard
 const logger = {
   info: (msg) => {
@@ -174,9 +163,6 @@ const logger = {
   step: (msg) => {
     transactionLogBox.log(`{white-fg}[→] ${msg}{/white-fg}`);
     screen.render();
-  },
-  banner: () => {
-    // Banner is now part of the UI title
   }
 };
 
@@ -238,58 +224,8 @@ const USDC_ABI = [
   },
 ];
 
-const WETH_ABI = [
-  {
-    constant: true,
-    inputs: [{ name: 'account', type: 'address' }],
-    name: 'balanceOf',
-    outputs: [{ name: '', type: 'uint256' }],
-    type: 'function',
-    stateMutability: 'view',
-  },
-  {
-    constant: true,
-    inputs: [
-      { name: 'owner', type: 'address' },
-      { name: 'spender', type: 'address' },
-    ],
-    name: 'allowance',
-    outputs: [{ name: '', type: 'uint256' }],
-    type: 'function',
-    stateMutability: 'view',
-  },
-  {
-    constant: false,
-    inputs: [
-      { name: 'spender', type: 'address' },
-      { name: 'value', type: 'uint256' },
-    ],
-    name: 'approve',
-    outputs: [{ name: '', type: 'bool' }],
-    type: 'function',
-    stateMutability: 'nonpayable',
-  },
-  {
-    constant: false,
-    inputs: [{ name: 'wad', type: 'uint256' }],
-    name: 'deposit',
-    outputs: [],
-    type: 'function',
-    stateMutability: 'payable',
-  },
-  {
-    constant: false,
-    inputs: [{ name: 'wad', type: 'uint256' }],
-    name: 'withdraw',
-    outputs: [],
-    type: 'function',
-    stateMutability: 'nonpayable',
-  }
-];
-
 const contractAddress = '0x5FbE74A283f7954f10AA04C2eDf55578811aeb03';
 const USDC_ADDRESS = '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238';
-const WETH_ADDRESS = '0x7b79995e5f793A07Bc00c21412e50Ecae098E7f9';
 const graphqlEndpoint = 'https://graphql.union.build/v1/graphql';
 const baseExplorerUrl = 'https://sepolia.etherscan.io';
 const unionUrl = 'https://app.union.build/explorer';
@@ -417,42 +353,6 @@ async function checkBalanceAndApprove(wallet, tokenAddress, tokenAbi, spenderAdd
   return true;
 }
 
-async function wrapEthIfNeeded(wallet, amount) {
-  const wethContract = new ethers.Contract(WETH_ADDRESS, WETH_ABI, wallet);
-  const ethBalance = await provider().getBalance(wallet.address);
-  
-  if (ethBalance < amount) {
-    logger.error(`Insufficient ETH balance. Need at least ${ethers.formatEther(amount)} ETH`);
-    return false;
-  }
-  
-  const wethBalance = await wethContract.balanceOf(wallet.address);
-  if (wethBalance < amount) {
-    logger.loading(`Wrapping ${ethers.formatEther(amount)} ETH to WETH...`);
-    try {
-      const tx = await wethContract.deposit({ value: amount });
-      txStats.pending++;
-      updateCharts();
-      
-      const receipt = await tx.wait();
-      txStats.pending--;
-      txStats.success++;
-      updateCharts();
-      
-      logger.success(`ETH wrapped to WETH: ${explorer.tx(receipt.hash)}`);
-      await delay(3000);
-    } catch (err) {
-      txStats.pending--;
-      txStats.failed++;
-      updateCharts();
-      
-      logger.error(`Wrapping ETH failed: ${err.message}`);
-      return false;
-    }
-  }
-  return true;
-}
-
 async function sendFromWallet(walletInfo, maxTransaction, transferType) {
   const wallet = new ethers.Wallet(walletInfo.privatekey, provider());
   logger.loading(`Sending from ${wallet.address} (${walletInfo.name || 'Unnamed'})`);
@@ -461,26 +361,34 @@ async function sendFromWallet(walletInfo, maxTransaction, transferType) {
   let tokenName = '';
   let tokenAddress = '';
   let tokenAbi = [];
+  let channelId = 0;
+  const transferAmount = ethers.parseEther('0.0001'); // 0.0001 ETH
   
   if (transferType === 'usdc') {
     tokenName = 'USDC';
     tokenAddress = USDC_ADDRESS;
     tokenAbi = USDC_ABI;
+    channelId = 8;
     shouldProceed = await checkBalanceAndApprove(wallet, tokenAddress, tokenAbi, contractAddress, tokenName);
-  } else if (transferType === 'weth') {
-    tokenName = 'WETH';
-    tokenAddress = WETH_ADDRESS;
-    tokenAbi = WETH_ABI;
-    const amountToWrap = ethers.parseEther('0.0001'); // Wrap 0.0001 ETH for transfer
-    const wrapSuccess = await wrapEthIfNeeded(wallet, amountToWrap);
-    shouldProceed = wrapSuccess && await checkBalanceAndApprove(wallet, tokenAddress, tokenAbi, contractAddress, tokenName);
+  } else if (transferType === 'eth') {
+    tokenName = 'ETH';
+    channelId = 9; // Channel ID for ETH transfers
+    
+    // Check ETH balance (including gas costs)
+    const ethBalance = await provider().getBalance(wallet.address);
+    const requiredBalance = transferAmount + ethers.parseEther('0.001'); // Adding buffer for gas
+    if (ethBalance < requiredBalance) {
+      logger.error(`Insufficient ETH balance. Need at least ${ethers.formatEther(requiredBalance)} ETH (including gas)`);
+      return;
+    }
+    
+    shouldProceed = true;
   }
   
   if (!shouldProceed) return;
 
   const contract = new ethers.Contract(contractAddress, UCS03_ABI, wallet); 
   const addressHex = wallet.address.slice(2).toLowerCase();
-  const channelId = transferType === 'usdc' ? 8 : 9; // Different channel for WETH
   const timeoutHeight = 0;
   
   for (let i = 1; i <= maxTransaction; i++) {
@@ -492,7 +400,7 @@ async function sendFromWallet(walletInfo, maxTransaction, transferType) {
     const timestampNow = Math.floor(Date.now() / 1000);
     const salt = ethers.keccak256(ethers.solidityPacked(['address', 'uint256'], [wallet.address, timestampNow]));
 
-    // Different operand based on token type
+    // Different operand based on transfer type
     let operand;
     if (transferType === 'usdc') {
       operand = '0x00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000002c00000000000000000000000000000000000000000000000000000000000000140000000000000000000000000000000000000000000000000000000000000018000000000000000000000000000000000000000000000000000000000000001c000000000000000000000000000000000000000000000000000000000000027100000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000024000000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000028000000000000000000000000000000000000000000000000000000000000027100000000000000000000000000000000000000000000000000000000000000014' +
@@ -500,12 +408,13 @@ async function sendFromWallet(walletInfo, maxTransaction, transferType) {
       '0000000000000000000000000000000000000000000000000000000000000000000000000000000000000014' +
       addressHex +
       '00000000000000000000000000000000000000000000000000000000000000000000000000000000000000141c7d4b196cb0c7b01d743fbc6116a902379c72380000000000000000000000000000000000000000000000000000000000000000000000000000000000000004555344430000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000045553444300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001457978bfe465ad9b1c0bf80f6c1539d300705ea50000000000000000000000000';
-    } else if (transferType === 'weth') {
-      operand = '0xff0d7c2f00000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000183e3bcd270059c058ce191dc34ac59ab0ccef2037033d3b50e15022d39fd5fd451083f938fa829800000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000003a000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000002c00000000000000000000000000000000000000000000000000000000000000140000000000000000000000000000000000000000000000000000000000000018000000000000000000000000000000000000000000000000000000000000001c0000000000000000000000000000000000000000000000000000000e8d4a5100000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000240000000000000000000000000000000000000000000000000000000000000001200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000280000000000000000000000000000000000000000000000000000000e8d4a510000000000000000000000000000000000000000000000000000000000000000014dae3fcd3f32ed8f6486960c3a0a90bcc428dde360000000000000000000000000000000000000000000000000000000000000000000000000000000000000014dae3fcd3f32ed8f6486960c3a0a90bcc428dde3600000000000000000000000000000000000000000000000000000000000000000000000000000000000000147b79995e5f793a07bc00c21412e50ecae098e7f900000000000000000000000000000000000000000000000000000000000000000000000000000000000000045745544800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000d57726170706564204574686572000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000014b476983cc7853797fc5adc4bcad39b277bc79656000000000000000000000000' +
+    } else if (transferType === 'eth') {
+      // ETH transfer operand with 0.0001 ETH amount
+      operand = '0xff0d7c2f00000000000000000000000000000000000000000000000000000000000000090000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000183e3bcd270059c058ce191dc34ac59ab0ccef2037033d3b50e15022d39fd5fd451083f938fa829800000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000003a000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000002c00000000000000000000000000000000000000000000000000000000000000140000000000000000000000000000000000000000000000000000000000000018000000000000000000000000000000000000000000000000000000000000001c00000000000000000000000000000000000000000000000000000000000186a00000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000024000000000000000000000000000000000000000000000000000000000000000120000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000028000000000000000000000000000000000000000000000000000000000000186a000000000000000000000000000000000000000000000000000000000000000014' +
       addressHex +
       '0000000000000000000000000000000000000000000000000000000000000000000000000000000000000014' +
       addressHex +
-      '00000000000000000000000000000000000000000000000000000000000000000000000000000000000000147b79995e5f793a07bc00c21412e50ecae098e7f900000000000000000000000000000000000000000000000000000000000000000000000000000000000000045745544800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000d57726170706564204574686572000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000014b476983cc7853797fc5adc4bcad39b277bc79656000000000000000000000000';
+      '00000000000000000000000000000000000000000000000000000000000000000000000000000000000000140000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000044554480000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000044554480000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001457978bfe465ad9b1c0bf80f6c1539d300705ea50000000000000000000000000';
     }
 
     const instruction = {
@@ -519,8 +428,12 @@ async function sendFromWallet(walletInfo, maxTransaction, transferType) {
       txStats.pending++;
       updateCharts();
       
-      const tx = await contract.send(channelId, timeoutHeight, timeoutTimestamp, salt, instruction);
-      await tx.wait(1);
+      // Add gas limit to prevent out of gas errors
+      const tx = await contract.send(channelId, timeoutHeight, timeoutTimestamp, salt, instruction, {
+        gasLimit: 500000 // Increased gas limit for ETH transfers
+      });
+      
+      const receipt = await tx.wait(1);
       
       const endTime = Date.now();
       const txTime = endTime - startTime;
@@ -540,7 +453,23 @@ async function sendFromWallet(walletInfo, maxTransaction, transferType) {
       txStats.failed++;
       updateCharts();
       
-      logger.error(`Failed for ${wallet.address}: ${err.message}`);
+      // More detailed error logging
+      if (err.reason) {
+        logger.error(`Failed for ${wallet.address}: ${err.reason}`);
+      } else if (err.message.includes('reverted')) {
+        // Try to decode revert reason
+        try {
+          const revertReason = err.data ? await decodeRevertReason(err.data) : 'unknown';
+          logger.error(`Failed for ${wallet.address}: execution reverted (${revertReason})`);
+        } catch {
+          logger.error(`Failed for ${wallet.address}: execution reverted (unknown reason)`);
+        }
+      } else {
+        logger.error(`Failed for ${wallet.address}: ${err.message}`);
+      }
+      
+      // Add delay after failure to prevent rapid retries
+      await delay(2000);
     }
 
     if (i < maxTransaction) {
@@ -548,6 +477,16 @@ async function sendFromWallet(walletInfo, maxTransaction, transferType) {
     }
     
     updateStatusInfo();
+  }
+}
+
+// Helper function to decode revert reasons
+async function decodeRevertReason(data) {
+  try {
+    const revertReason = ethers.toUtf8String('0x' + data.slice(138));
+    return revertReason || 'unknown';
+  } catch {
+    return 'unknown';
   }
 }
 
@@ -607,16 +546,13 @@ async function main() {
     try {
       const w = new ethers.Wallet(wallet.privatekey, provider());
       const usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, w);
-      const wethContract = new ethers.Contract(WETH_ADDRESS, WETH_ABI, w);
       const ethBalance = await provider().getBalance(w.address);
-      
       const usdcBalance = await usdcContract.balanceOf(w.address);
-      const wethBalance = await wethContract.balanceOf(w.address);
       
       return [
         wallet.name || 'Unnamed', 
         w.address.slice(0, 12) + '...' + w.address.slice(-6), 
-        `USDC: ${ethers.formatUnits(usdcBalance, 6)}\nWETH: ${ethers.formatEther(wethBalance)}\nETH: ${ethers.formatEther(ethBalance)}`
+        `USDC: ${ethers.formatUnits(usdcBalance, 6)}\nETH: ${ethers.formatEther(ethBalance)}`
       ];
     } catch (e) {
       return [wallet.name || 'Unnamed', 'Error', 'Error'];
@@ -631,9 +567,9 @@ async function main() {
   screen.render();
 
   // Ask for transfer type
-  const transferType = await askQuestion("Choose transfer type (usdc/weth): ");
-  if (!['usdc', 'weth'].includes(transferType.toLowerCase())) {
-    logger.error("Invalid transfer type. Please choose either 'usdc' or 'weth'.");
+  const transferType = await askQuestion("Choose transfer type (usdc/eth): ");
+  if (!['usdc', 'eth'].includes(transferType.toLowerCase())) {
+    logger.error("Invalid transfer type. Please choose either 'usdc' or 'eth'.");
     await delay(5000);
     process.exit(1);
   }
