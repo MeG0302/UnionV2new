@@ -9,7 +9,7 @@ const contrib = require('blessed-contrib');
 // Create screen
 const screen = blessed.screen({
   smartCSR: true,
-  title: 'Union Testnet Auto Bot - KAZUHA'
+  title: 'Union Testnet Auto Bot - MeG'
 });
 
 // Create dashboard grid layout
@@ -448,7 +448,7 @@ async function main() {
     bottom: 0,
     width: '100%',
     height: 1,
-    content: ' {bold}{black-fg}Press Q/ESC to exit | Union Testnet Auto Bot - KAZUHA787{/black-fg}{/bold}',
+    content: ' {bold}{black-fg}Press Q/ESC to exit | Union Testnet Auto Bot - MeG787{/black-fg}{/bold}',
     tags: true,
     style: {
       fg: 'black',
