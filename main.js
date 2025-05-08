@@ -6,6 +6,13 @@ const moment = require('moment-timezone');
 const blessed = require('blessed');
 const contrib = require('blessed-contrib');
 
+// Helper function for random USDC amounts
+function getRandomUSDCAmount() {
+  const min = 0.007;
+  const max = 0.04;
+  return (Math.random() * (max - min) + min).toFixed(6); // 6 decimal places for USDC precision
+}
+
 // Create screen
 const screen = blessed.screen({
   smartCSR: true,
@@ -84,7 +91,7 @@ const infoBox = grid.set(6, 6, 6, 6, contrib.markdown, {
 function updateStatusInfo() {
   const now = moment().tz('Asia/Jakarta').format('HH:mm:ss | DD-MM-YYYY');
   const networkStatus = Math.floor(Math.random() * 30) + 70; // Simulating network status
-  
+
   infoBox.setMarkdown(
 `# System Status
 
@@ -95,11 +102,12 @@ function updateStatusInfo() {
 **RPC Provider**: ${currentRpcProviderIndex + 1}/${rpcProviders.length}
 
 ## Network Information
+
 * Chain ID: 11155111 (Sepolia)
 * Gas Price: ~${Math.floor(Math.random() * 15) + 25} Gwei
 * Pending Txs: ${Math.floor(Math.random() * 10)}`
   );
-  
+
   gasUsageGauge.setPercent(networkStatus);
   screen.render();
 }
@@ -121,12 +129,12 @@ function updateCharts() {
     {percent: txStats.failed, label: 'Failed', color: 'red'},
     {percent: txStats.pending, label: 'Pending', color: 'yellow'}
   ]);
-  
+
   // Update line chart with performance data
   if (txStats.times.length > 0) {
     txStats.y.shift();
     txStats.y.push(txStats.times[txStats.times.length - 1]);
-    
+
     txLineChart.setData([{
       title: 'Tx Time',
       x: txStats.x,
@@ -134,7 +142,7 @@ function updateCharts() {
       style: {line: 'yellow'}
     }]);
   }
-  
+
   screen.render();
 }
 
@@ -348,10 +356,10 @@ async function pollPacketHash(txHash, retries = 50, intervalMs = 5000) {
   };
   const data = {
     query: `query ($submission_tx_hash: String!) {
-      v2_transfers(args: {p_transaction_hash: $submission_tx_hash}) {
-        packet_hash
-      }
-    }`,
+          v2_transfers(args: {p_transaction_hash: $submission_tx_hash}) {
+            packet_hash
+          }
+        }`,
     variables: {
       submission_tx_hash: txHash.startsWith('0x') ? txHash : `0x${txHash}`,
     },
@@ -374,7 +382,7 @@ async function pollPacketHash(txHash, retries = 50, intervalMs = 5000) {
 async function checkBalanceAndApprove(wallet, tokenAddress, tokenAbi, spenderAddress, tokenName) {
   const tokenContract = new ethers.Contract(tokenAddress, tokenAbi, wallet);
   const balance = await tokenContract.balanceOf(wallet.address);
-  
+
   if (balance === 0n) {
     logger.error(`${wallet.address} does not have enough ${tokenName}. Fund your wallet first!`);
     return false;
@@ -388,7 +396,7 @@ async function checkBalanceAndApprove(wallet, tokenAddress, tokenAbi, spenderAdd
       const tx = await tokenContract.approve(spenderAddress, approveAmount);
       txStats.pending++;
       updateCharts();
-      
+
       const receipt = await tx.wait();
       txStats.pending--;
       txStats.success++;
@@ -411,14 +419,14 @@ async function checkBalanceAndApprove(wallet, tokenAddress, tokenAbi, spenderAdd
 async function sendFromWallet(walletInfo, maxTransaction, transferType) {
   const wallet = new ethers.Wallet(walletInfo.privatekey, provider());
   logger.loading(`Sending from ${wallet.address} (${walletInfo.name || 'Unnamed'})`);
-  
+
   let shouldProceed = false;
   let tokenName = '';
   let tokenAddress = '';
   let tokenAbi = [];
   let channelId = 0;
   const transferAmount = ethers.parseEther('0.0001'); // 0.0001 WETH
-  
+
   if (transferType === 'usdc') {
     tokenName = 'USDC';
     tokenAddress = USDC_ADDRESS;
@@ -430,7 +438,7 @@ async function sendFromWallet(walletInfo, maxTransaction, transferType) {
     tokenAddress = WETH_ADDRESS;
     tokenAbi = WETH_ABI;
     channelId = 9; // Channel ID for WETH transfers
-    
+
     // Check ETH balance first (needed for gas and potential WETH wrapping)
     const ethBalance = await provider().getBalance(wallet.address);
     const requiredEthForGas = ethers.parseEther('0.001');
@@ -438,11 +446,11 @@ async function sendFromWallet(walletInfo, maxTransaction, transferType) {
       logger.error(`Insufficient ETH for gas. Need at least ${ethers.formatEther(requiredEthForGas)} ETH`);
       return;
     }
-    
+
     // Check WETH balance
     const wethContract = new ethers.Contract(WETH_ADDRESS, WETH_ABI, wallet);
     const wethBalance = await wethContract.balanceOf(wallet.address);
-    
+
     if (wethBalance < transferAmount) {
       // If not enough WETH, try to wrap ETH
       const ethToWrap = transferAmount - wethBalance;
@@ -463,20 +471,20 @@ async function sendFromWallet(walletInfo, maxTransaction, transferType) {
         return;
       }
     }
-    
+
     // Approve WETH spending
     shouldProceed = await checkBalanceAndApprove(wallet, tokenAddress, tokenAbi, contractAddress, tokenName);
   }
-  
+
   if (!shouldProceed) return;
 
-  const contract = new ethers.Contract(contractAddress, UCS03_ABI, wallet); 
+  const contract = new ethers.Contract(contractAddress, UCS03_ABI, wallet);
   const addressHex = wallet.address.slice(2).toLowerCase();
   const timeoutHeight = 0;
-  
+
   for (let i = 1; i <= maxTransaction; i++) {
     logger.step(`${walletInfo.name || 'Unnamed'} | ${tokenName} Transaction ${i}/${maxTransaction}`);
-    
+
     const now = BigInt(Date.now()) * 1_000_000n;
     const oneDayNs = 86_400_000_000_000n;
     const timeoutTimestamp = (now + oneDayNs).toString();
@@ -486,6 +494,11 @@ async function sendFromWallet(walletInfo, maxTransaction, transferType) {
     // Different operand based on transfer type
     let operand;
     if (transferType === 'usdc') {
+      const randomAmount = getRandomUSDCAmount();
+      const amountInUnits = ethers.parseUnits(randomAmount, 6); // USDC has 6 decimals
+      
+      logger.step(`Using random USDC amount: ${randomAmount} (${amountInUnits.toString()} units)`);
+      
       operand = '0x00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000002c00000000000000000000000000000000000000000000000000000000000000140000000000000000000000000000000000000000000000000000000000000018000000000000000000000000000000000000000000000000000000000000001c000000000000000000000000000000000000000000000000000000000000027100000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000024000000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000028000000000000000000000000000000000000000000000000000000000000027100000000000000000000000000000000000000000000000000000000000000014' +
       addressHex +
       '0000000000000000000000000000000000000000000000000000000000000000000000000000000000000014' +
@@ -493,7 +506,7 @@ async function sendFromWallet(walletInfo, maxTransaction, transferType) {
       '00000000000000000000000000000000000000000000000000000000000000000000000000000000000000141c7d4b196cb0c7b01d743fbc6116a902379c72380000000000000000000000000000000000000000000000000000000000000000000000000000000000000004555344430000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000045553444300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001457978bfe465ad9b1c0bf80f6c1539d300705ea50000000000000000000000000';
     } else if (transferType === 'weth') {
       // WETH transfer operand with 0.0001 WETH amount
-      operand = '0xff0d7c2f00000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000183e3bcd270059c058ce191dc34ac59ab0ccef2037033d3b50e15022d39fd5fd451083f938fa829800000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000003a000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000002c00000000000000000000000000000000000000000000000000000000000000140000000000000000000000000000000000000000000000000000000000000018000000000000000000000000000000000000000000000000000000000000001c0000000000000000000000000000000000000000000000000000000e8d4a5100000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000240000000000000000000000000000000000000000000000000000000000000001200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000280000000000000000000000000000000000000000000000000000000e8d4a510000000000000000000000000000000000000000000000000000000000000000014' +
+      operand = '0xff0d7c2f00000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000183e3bcd270059c058ce191dc34ac59ab0ccef2037033d3b50e15022d39fd5fd451083f938fa829800000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000003a000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000030000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000002c00000000000000000000000000000000000000000000000000000000000000140000000000000000000000000000000000000000000000000000000000000018000000000000000000000000000000000000000000000000000000000000001c0000000000000000000000000000000000000000000000000000000e8d4a5100000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000240000000000000000000000000000000000000000000000000000000000000001200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000280000000000000000000000000000000000000000000000000000000e8d4a510000000000000000000000000000000000000000000000000000000000000000014' +
       addressHex +
       '0000000000000000000000000000000000000000000000000000000000000000000000000000000000000014' +
       addressHex +
@@ -558,7 +571,7 @@ async function sendFromWallet(walletInfo, maxTransaction, transferType) {
     if (i < maxTransaction) {
       await delay(1000);
     }
-    
+
     updateStatusInfo();
   }
 }
@@ -592,10 +605,10 @@ async function main() {
       bg: 'blue',
     }
   });
-  
+
   screen.render();
   updateStatusInfo();
-  
+
   // Set initial data for UI components
   walletInfoTable.setData({
     headers: ['Name', 'Address', 'Balance'],
@@ -633,7 +646,7 @@ async function main() {
       const ethBalance = await provider().getBalance(w.address);
       const usdcBalance = await usdcContract.balanceOf(w.address);
       const wethBalance = await wethContract.balanceOf(w.address);
-      
+
       return [
         wallet.name || 'Unnamed', 
         w.address.slice(0, 12) + '...' + w.address.slice(-6), 
@@ -643,12 +656,12 @@ async function main() {
       return [wallet.name || 'Unnamed', 'Error', 'Error'];
     }
   }));
-  
+
   walletInfoTable.setData({
     headers: ['Name', 'Address', 'Balances'],
     data: tableData
   });
-  
+
   screen.render();
 
   // Ask for transfer type
@@ -661,7 +674,7 @@ async function main() {
 
   const maxTransactionInput = await askQuestion("Enter the number of transactions per wallet: ");
   const maxTransaction = parseInt(maxTransactionInput.trim());
-  
+
   if (isNaN(maxTransaction) || maxTransaction <= 0) {
     logger.error("Invalid number. Please enter a positive number.");
     await delay(5000);
@@ -695,7 +708,7 @@ async function main() {
   if (walletData.wallets.length === 0) {
     logger.warn("No wallets processed. Check wallet.json for valid entries.");
   }
-  
+
   // Keep the screen rendered until user exits
   logger.info("All transactions completed. Press Q or ESC to exit.");
 }
