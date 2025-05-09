@@ -1,0 +1,14 @@
+{
+  "wallets": [
+    {
+      "name": "keplr_wallet_1",
+      "address": "bbn1...",
+      "private_key": "..."
+    },
+    {
+      "name": "keplr_wallet_2",
+      "address": "bbn1...",
+      "private_key": "..."
+    }
+  ]
+}
