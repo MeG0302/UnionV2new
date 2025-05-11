@@ -8,7 +8,7 @@ const contrib = require('blessed-contrib');
 
 // Babylon-specific constants
 const BABYLON_USDC_ADDRESS = 'bbn1zsrv23akkgxdnwul72sftgv2xjt5khsnt3wwjhp0ffh683hzp5aq5a0h6n';
-const BABYLON_CHANNEL_ID = 7; // Updated to match input data
+const BABYLON_CHANNEL_ID = 7;
 const BABYLON_RPC_URL = 'https://rpc.testnet-5.babylon.union.build';
 const BABYLON_WALLET_FILE = path.join(__dirname, 'baby_wallet.json');
 
@@ -512,56 +512,43 @@ async function sendFromWallet(walletInfo, maxTransaction, transferType, destinat
       logger.step(`Using random USDC amount: ${randomAmount} (${amountInUnits.toString()} units)`);
       
       if (destination === 'babylon') {
-        // Babylon-specific operand with destination address
-        const babylonAddress = babylonWallet.address.startsWith('bbn1') 
-          ? babylonWallet.address.slice(4) // Remove 'bbn1' prefix
-          : babylonWallet.address;
-        
-        const babylonAddressBytes = ethers.toUtf8Bytes(babylonAddress);
-        const babylonAddressHex = ethers.hexlify(babylonAddressBytes);
-        const amountHex = amountInUnits.toString(16).padStart(64, '0');
-        
-        operand = ethers.solidityPacked(
-          ['bytes'],
+        // Fixed Babylon operand format
+        const babylonAddress = babylonWallet.address;
+        if (!babylonAddress.startsWith('bbn1')) {
+          logger.error(`Invalid Babylon address format: ${babylonAddress}`);
+          continue;
+        }
+
+        // Properly structured IBC packet data
+        const packetData = {
+          sourceAddress: wallet.address,
+          destinationAddress: babylonAddress,
+          tokenAddress: USDC_ADDRESS,
+          amount: amountInUnits.toString(),
+          denom: 'USDC'
+        };
+
+        // Encode the packet data
+        operand = ethers.AbiCoder.defaultAbiCoder().encode(
           [
-            '0xff0d7c2f' + // Function selector
-            '0000000000000000000000000000000000000000000000000000000000000007' + // Channel ID
-            '0000000000000000000000000000000000000000000000000000000000000000' + // Timeout height
-            timeoutTimestamp.slice(2).padStart(64, '0') + // Timeout timestamp
-            salt.slice(2) + // Salt
-            '00000000000000000000000000000000000000000000000000000000000000a0' + // Instruction offset
-            '0000000000000000000000000000000000000000000000000000000000000000' + // Empty bytes
-            '0000000000000000000000000000000000000000000000000000000000000002' + // Array length?
-            '0000000000000000000000000000000000000000000000000000000000000060' + // Offset 1
-            '00000000000000000000000000000000000000000000000000000000000003e0' + // Offset 2
-            '0000000000000000000000000000000000000000000000000000000000000020' + // ?
-            '0000000000000000000000000000000000000000000000000000000000000001' + // ?
-            '0000000000000000000000000000000000000000000000000000000000000020' + // ?
-            '0000000000000000000000000000000000000000000000000000000000000001' + // ?
-            '0000000000000000000000000000000000000000000000000000000000000003' + // ?
-            '0000000000000000000000000000000000000000000000000000000000000060' + // ?
-            '0000000000000000000000000000000000000000000000000000000000000300' + // ?
-            '0000000000000000000000000000000000000000000000000000000000000140' + // ?
-            '0000000000000000000000000000000000000000000000000000000000000180' + // ?
-            '00000000000000000000000000000000000000000000000000000000000001e0' + // ?
-            '00000000000000000000000000000000000000000000000000000000000003e8' + // ?
-            '0000000000000000000000000000000000000000000000000000000000000220' + // ?
-            '0000000000000000000000000000000000000000000000000000000000000260' + // ?
-            '0000000000000000000000000000000000000000000000000000000000000006' + // ?
-            '0000000000000000000000000000000000000000000000000000000000000000' + // ?
-            '00000000000000000000000000000000000000000000000000000000000002a0' + // ?
-            amountHex + // Amount
-            '000000000000000000000000' + addressHex + // Source address
-            '0000000000000000000000000000000000000000000000000000000000000000' + // Padding
-            '000000000000000000000000' + babylonAddressHex.slice(2) + // Babylon destination
-            '0000000000000000000000000000000000000000000000000000000000000000' + // Padding
-            '000000000000000000000000' + USDC_ADDRESS.slice(2) + // Token address
-            '0000000000000000000000000000000000000000000000000000000000000000' + // Padding
-            '0000000000000000000000000000000000000000000000000000000000000004' + // Length
-            '5553444300000000000000000000000000000000000000000000000000000000' + // USDC symbol
-            '0000000000000000000000000000000000000000000000000000000000000004' + // Length
-            '5553444300000000000000000000000000000000000000000000000000000000' + // USDC symbol
-            babylonAddressHex.slice(2).padEnd(64, '0') // Babylon address
+            'tuple(bytes32,bytes32,bytes32,bytes32,bytes32)',
+            'tuple(bytes32,bytes32,bytes32,bytes32,bytes32)'
+          ],
+          [
+            [
+              ethers.zeroPadValue(ethers.toUtf8Bytes('sourceAddress'), 32),
+              ethers.zeroPadValue(ethers.toUtf8Bytes(packetData.sourceAddress), 32),
+              ethers.zeroPadValue(ethers.toUtf8Bytes('amount'), 32),
+              ethers.zeroPadValue(ethers.toUtf8Bytes(packetData.amount), 32),
+              ethers.zeroPadValue(ethers.toUtf8Bytes('tokenAddress'), 32)
+            ],
+            [
+              ethers.zeroPadValue(ethers.toUtf8Bytes(packetData.tokenAddress), 32),
+              ethers.zeroPadValue(ethers.toUtf8Bytes('destinationAddress'), 32),
+              ethers.zeroPadValue(ethers.toUtf8Bytes(packetData.destinationAddress), 32),
+              ethers.zeroPadValue(ethers.toUtf8Bytes('denom'), 32),
+              ethers.zeroPadValue(ethers.toUtf8Bytes(packetData.denom), 32)
+            ]
           ]
         );
       } else {
