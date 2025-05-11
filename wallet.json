@@ -1,9 +1,8 @@
 {
   "wallets": [
-    {
-      "name": "Kazuha",
+    
       "privatekey": "0xyour key",
-      "babylonAddress": "babyleon Address",
+      "babylonAddress": "babylon Address",
       "swapDirection": "Holesky to Sepolia"
     }
   ]
