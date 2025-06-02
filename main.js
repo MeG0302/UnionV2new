@@ -278,7 +278,7 @@ const graphqlEndpoint = 'https://graphql.union.build/v1/graphql';
 const baseExplorerUrl = 'https://sepolia.etherscan.io';
 const unionUrl = 'https://app.union.build/explorer';
 
-const rpcProviders = [new JsonRpcProvider('yourRPChere')];
+const rpcProviders = [new JsonRpcProvider('https://1rpc.io/sepolia')];
 let currentRpcProviderIndex = 0;
 
 function provider() {
